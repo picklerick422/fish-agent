@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -23,6 +24,14 @@ func main() {
 	}
 
 	sm := NewSessionManager()
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			sm.Cleanup(24 * time.Hour)
+		}
+	}()
 
 	log.Printf("login shell: %s", loginShell)
 	if data, err := os.ReadFile("/etc/shells"); err == nil {
@@ -43,7 +52,7 @@ func main() {
 		handleWS(sm, w, r)
 	})
 
-	log.Printf("wand-agent listening on %s", *addr)
+	log.Printf("fish-agent listening on %s", *addr)
 	log.Printf("auth token: %s", authToken)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }

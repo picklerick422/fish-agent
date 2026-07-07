@@ -20,6 +20,7 @@ var upgrader = websocket.Upgrader{
 func handleWS(sm *SessionManager, w http.ResponseWriter, r *http.Request) {
 	cols, rows := 80, 24
 	cwd := ""
+	sessionID := ""
 	if err := r.ParseForm(); err == nil {
 		if c := r.Form.Get("cols"); c != "" {
 			if v, ok := parseInt(c); ok {
@@ -32,6 +33,7 @@ func handleWS(sm *SessionManager, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		cwd = r.Form.Get("cwd")
+		sessionID = r.Form.Get("session_id")
 	}
 	shell := r.Form.Get("shell")
 	if shell == "" {
@@ -45,12 +47,23 @@ func handleWS(sm *SessionManager, w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	session, err := sm.Create(cwd, cols, rows, shell)
-	if err != nil {
-		log.Printf("create session: %v", err)
-		return
+	var session *Session
+	if sessionID != "" {
+		session = sm.Get(sessionID)
+		if session == nil {
+			resp, _ := json.Marshal(map[string]string{"type": "error", "error": "session not found or expired"})
+			conn.WriteMessage(websocket.TextMessage, resp)
+			return
+		}
+		session.attach(conn, cols, rows)
+	} else {
+		session, err = sm.Create(cwd, cols, rows, shell)
+		if err != nil {
+			log.Printf("create session: %v", err)
+			return
+		}
+		session.sendSessionID(conn)
 	}
-	defer cleanupSession(sm, session)
 
 	// Push initial CWD to frontend
 	if initCwd, _ := json.Marshal(map[string]string{"type": "cwd", "dir": session.CWD}); initCwd != nil {
@@ -107,6 +120,7 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 			return
 		}
 		acc = append(acc, buf[:n]...)
+		session.OutputBuf.Write(buf[:n])
 		if len(acc) >= 65536 || n < len(buf) {
 			if err := conn.WriteMessage(websocket.BinaryMessage, acc); err != nil {
 				close(done)

@@ -3,22 +3,29 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
+	"github.com/gorilla/websocket"
 )
 
 type Session struct {
-	ID     string
-	PTY    *os.File
-	Cmd    *exec.Cmd
-	CWD    string
-	Shell  string
-	mu     sync.Mutex
-	closed bool
+	ID         string
+	PTY        *os.File
+	Cmd        *exec.Cmd
+	CWD        string
+	Shell      string
+	OutputBuf  *RingBuffer
+	wsConn     interface{}
+	CreatedAt  time.Time
+	LastAccess time.Time
+	mu         sync.Mutex
+	closed     bool
 }
 
 type SessionManager struct {
@@ -57,7 +64,7 @@ func (sm *SessionManager) Create(cwd string, cols, rows int, shell ...string) (*
 	cmd.Env = append(env,
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
-		"TERM_PROGRAM=wand",
+		"TERM_PROGRAM=fish-agent",
 		"TERM_PROGRAM_VERSION=0.1.0",
 	)
 
@@ -66,7 +73,16 @@ func (sm *SessionManager) Create(cwd string, cols, rows int, shell ...string) (*
 		return nil, fmt.Errorf("pty start: %w", err)
 	}
 
-	session := &Session{ID: newID(), PTY: fd, Cmd: cmd, CWD: cwd, Shell: shellPath}
+	session := &Session{
+		ID:         newID(),
+		PTY:        fd,
+		Cmd:        cmd,
+		CWD:        cwd,
+		Shell:      shellPath,
+		OutputBuf:  NewRingBuffer(defaultRingBufferSize),
+		CreatedAt:  time.Now(),
+		LastAccess: time.Now(),
+	}
 
 	if cwd == "" {
 		link := fmt.Sprintf("/proc/%d/cwd", cmd.Process.Pid)
@@ -85,13 +101,36 @@ func (sm *SessionManager) Create(cwd string, cols, rows int, shell ...string) (*
 func (sm *SessionManager) Get(id string) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.sessions[id]
+	session, ok := sm.sessions[id]
+	if ok {
+		session.mu.Lock()
+		session.LastAccess = time.Now()
+		session.mu.Unlock()
+	}
+	return session
 }
 
 func (sm *SessionManager) Remove(id string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	delete(sm.sessions, id)
+}
+
+func (sm *SessionManager) Cleanup(maxIdle time.Duration) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	now := time.Now()
+	for id, session := range sm.sessions {
+		session.mu.Lock()
+		if now.Sub(session.LastAccess) > maxIdle {
+			session.closed = true
+			session.PTY.Close()
+			session.Cmd.Process.Kill()
+			session.Cmd.Wait()
+			delete(sm.sessions, id)
+		}
+		session.mu.Unlock()
+	}
 }
 
 func (s *Session) Close() {
@@ -111,4 +150,27 @@ func newID() string {
 	buf := make([]byte, 16)
 	rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+func (s *Session) sendSessionID(conn *websocket.Conn) {
+	resp, _ := json.Marshal(map[string]string{"type": "session", "id": s.ID})
+	conn.WriteMessage(websocket.TextMessage, resp)
+}
+
+func (s *Session) attach(conn *websocket.Conn, cols, rows int) {
+	s.mu.Lock()
+	s.wsConn = conn
+	s.LastAccess = time.Now()
+	s.mu.Unlock()
+
+	s.sendSessionID(conn)
+
+	snapshot := s.OutputBuf.Snapshot()
+	if len(snapshot) > 0 {
+		conn.WriteMessage(websocket.BinaryMessage, snapshot)
+	}
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "resize", "cols": cols, "rows": rows,
+	})
 }

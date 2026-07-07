@@ -1,4 +1,4 @@
-module github.com/ystyle/wand-agent
+module github.com/ystyle/fish-agent
 
 go 1.26
 
