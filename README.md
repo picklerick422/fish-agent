@@ -9,10 +9,13 @@ Creates a PTY session for each WebSocket connection, forwarding terminal I/O bet
 ## Quick Start
 
 ```bash
-# 克隆并构建
-git clone git@github.com:picklerick422/fish-agent.git
-cd fish-agent
-go build -buildvcs=false -o fish-agent .
+# ARM64 (openEuler 容器)
+wget https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-arm64 -O fish-agent
+chmod +x fish-agent
+
+# x86_64
+# wget https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-amd64 -O fish-agent
+# chmod +x fish-agent
 
 # 启动
 ./fish-agent --token harmonyterm
@@ -120,7 +123,7 @@ fish-agent 支持会话保持功能，类似于 tmux。客户端断连后保持 
 ## 构建
 
 ```bash
-go build -buildvcs=false -o fish-agent .
+go build -buildvcs=false -ldflags="-s -w" -o fish-agent .
 ```
 
 ## License
