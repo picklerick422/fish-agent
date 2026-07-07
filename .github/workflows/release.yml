@@ -26,13 +26,13 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -buildvcs=false -ldflags="-s -w" -o "wand-agent-${{ matrix.goos }}-${{ matrix.goarch }}" .
+          go build -buildvcs=false -ldflags="-s -w" -o "fish-agent-${{ matrix.goos }}-${{ matrix.goarch }}" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wand-agent-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: wand-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: fish-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: fish-agent-${{ matrix.goos }}-${{ matrix.goarch }}
 
   release:
     needs: build
@@ -40,11 +40,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wand-agent-*
+          pattern: fish-agent-*
           merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: wand-agent-*
+          files: fish-agent-*
           generate_release_notes: true
