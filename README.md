@@ -10,11 +10,13 @@ Creates a PTY session for each WebSocket connection, forwarding terminal I/O bet
 
 ```bash
 # ARM64 (openEuler 容器)
-wget https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-arm64 -O fish-agent
+curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-arm64
+mv fish-agent-linux-arm64 fish-agent
 chmod +x fish-agent
 
 # x86_64
-# wget https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-amd64 -O fish-agent
+# curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-amd64
+# mv fish-agent-linux-amd64 fish-agent
 # chmod +x fish-agent
 
 # 启动
@@ -27,7 +29,7 @@ chmod +x fish-agent
 
 ```bash
 mkdir -p ~/bin
-wget https://github.com/threefoldtech/zinit/releases/latest/download/zinit-linux-arm64 -O ~/bin/zinit
+curl -Lo ~/bin/zinit https://github.com/threefoldtech/zinit/releases/latest/download/zinit-linux-arm64
 chmod +x ~/bin/zinit
 ```
 
