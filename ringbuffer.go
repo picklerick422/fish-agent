@@ -2,7 +2,7 @@ package main
 
 import "sync"
 
-const defaultRingBufferSize = 1 * 1024 * 1024 // 1MB
+const defaultRingBufferSize = 8 * 1024 * 1024 // 8MB
 
 type RingBuffer struct {
 	buf    []byte
