@@ -2,16 +2,17 @@
 
 WebSocket PTY agent for [fish-term](https://github.com/ystyle/fish-term) — a HarmonyOS terminal emulator.
 
+> Fork from [ystyle/fish-agent](https://github.com/ystyle/fish-agent)，增加了会话保持、环形缓冲区屏幕恢复、CWD 轮询、fork 会话等功能。
+
 Creates a PTY session for each WebSocket connection, forwarding terminal I/O between the HarmonyOS app and a shell running in an openEuler container.
 
 ## Quick Start
 
 ```bash
-# ARM64（LOH / 轻量级鸿蒙）
-curl -LO https://github.com/ystyle/fish-agent/releases/latest/download/fish-agent-linux-arm64 && chmod +x fish-agent
-
-# x86_64
-curl -LO https://github.com/ystyle/fish-agent/releases/latest/download/fish-agent-linux-amd64 && chmod +x fish-agent
+# 克隆并构建
+git clone git@github.com:picklerick422/fish-agent.git
+cd fish-agent
+go build -buildvcs=false -o fish-agent .
 
 # 启动
 ./fish-agent --token harmonyterm
