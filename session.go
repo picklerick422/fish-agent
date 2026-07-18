@@ -26,6 +26,37 @@ type Session struct {
 	LastAccess time.Time
 	mu         sync.Mutex
 	closed     bool
+
+	// Awaiting-input detection (backend-driven notification signal).
+	lastOutput       time.Time
+	awaitingNotified bool
+	outputMu         sync.Mutex
+}
+
+// --- awaiting-input helpers -------------------------------------------------
+
+func (s *Session) noteOutput() {
+	s.outputMu.Lock()
+	s.lastOutput = time.Now()
+	s.outputMu.Unlock()
+}
+
+func (s *Session) timeSinceOutput() time.Duration {
+	s.outputMu.Lock()
+	defer s.outputMu.Unlock()
+	return time.Since(s.lastOutput)
+}
+
+func (s *Session) setAwaitingNotified(v bool) {
+	s.outputMu.Lock()
+	s.awaitingNotified = v
+	s.outputMu.Unlock()
+}
+
+func (s *Session) isAwaitingNotified() bool {
+	s.outputMu.Lock()
+	defer s.outputMu.Unlock()
+	return s.awaitingNotified
 }
 
 type SessionManager struct {

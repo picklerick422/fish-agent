@@ -104,17 +104,56 @@ func pollCwd(session *Session, conn *websocket.Conn, done chan struct{}) {
 	}
 }
 
+// ptyToWS reads PTY output and forwards it to the WebSocket.  When output
+// stalls for AWAITING_TIMEOUT the function checks whether the child process
+// is alive and blocked on terminal input, then sends an explicit
+// awaiting_input control message so the client can fire a system notification.
+const AWAITING_TIMEOUT = 3 * time.Second
+
 func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 	buf := make([]byte, 65536)
 	acc := make([]byte, 0, 131072)
+	session.noteOutput() // seed the output timestamp
+
 	for {
+		session.PTY.SetReadDeadline(time.Now().Add(AWAITING_TIMEOUT))
 		n, err := session.PTY.Read(buf)
 		if err != nil {
+			if os.IsTimeout(err) {
+				// Output silence window — check whether the process is
+				// alive and likely blocked on a terminal read.
+				if processAlive(session) && !session.isClosed() &&
+					!session.isAwaitingNotified() {
+					stat, staterr := readProcState(session.Cmd.Process.Pid)
+					// State "S" (interruptible sleep) is the best
+					// heuristic for "waiting on stdin read".
+					if staterr == nil && stat == "S" {
+						msg, _ := json.Marshal(map[string]interface{}{
+							"type":  "awaiting_input",
+							"state": true,
+						})
+						conn.WriteMessage(websocket.TextMessage, msg)
+						session.setAwaitingNotified(true)
+					}
+				}
+				continue // retry reading
+			}
+			// Real error — connection or PTY closed.
 			if len(acc) > 0 {
 				conn.WriteMessage(websocket.BinaryMessage, acc)
 			}
 			close(done)
 			return
+		}
+		// Got output — update timestamp and clear any awaiting signal.
+		session.noteOutput()
+		if session.isAwaitingNotified() {
+			msg, _ := json.Marshal(map[string]interface{}{
+				"type":  "awaiting_input",
+				"state": false,
+			})
+			conn.WriteMessage(websocket.TextMessage, msg)
+			session.setAwaitingNotified(false)
 		}
 		if session.isClosed() {
 			return
@@ -129,6 +168,29 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 			acc = acc[:0]
 		}
 	}
+}
+
+// readProcState returns the process state character from /proc/PID/stat.
+// /proc/PID/stat format:  PID (comm) STATE ...
+// The state is the character right after the closing paren.
+func readProcState(pid int) (string, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", err
+	}
+	// Locate the ')' that closes the comm field (comm may contain spaces).
+	closeParen := strings.LastIndexByte(string(data), ')')
+	if closeParen < 0 || closeParen+2 >= len(data) {
+		return "", fmt.Errorf("unexpected stat format")
+	}
+	return string(data[closeParen+2 : closeParen+3]), nil
+}
+
+// processAlive checks whether the process identified by the session's pid
+// still exists in /proc.
+func processAlive(session *Session) bool {
+	_, err := os.Stat(fmt.Sprintf("/proc/%d", session.Cmd.Process.Pid))
+	return err == nil
 }
 
 func wsToPTY(sm *SessionManager, session *Session, conn *websocket.Conn, done chan struct{}) {
