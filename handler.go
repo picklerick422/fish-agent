@@ -51,11 +51,23 @@ func handleWS(sm *SessionManager, w http.ResponseWriter, r *http.Request) {
 	if sessionID != "" {
 		session = sm.Get(sessionID)
 		if session == nil {
-			resp, _ := json.Marshal(map[string]string{"type": "error", "error": "session not found or expired"})
-			conn.WriteMessage(websocket.TextMessage, resp)
-			return
+			// Session is dead (PTY process exited) or expired — create a fresh
+			// session so the client isn't stuck in a reconnect loop. A new
+			// session ID is pushed via the session control message so the client
+			// can persist it for future reconnects.  We use the same CWD and
+			// shell from the URL so the environment matches what the user
+			// originally configured.
+			session, err = sm.Create(cwd, cols, rows, shell)
+			if err != nil {
+				log.Printf("create session (for stale session_id %s): %v", sessionID, err)
+				resp, _ := json.Marshal(map[string]string{"type": "error", "error": err.Error()})
+				conn.WriteMessage(websocket.TextMessage, resp)
+				return
+			}
+			session.sendSessionID(conn)
+		} else {
+			session.attach(conn, cols, rows)
 		}
-		session.attach(conn, cols, rows)
 	} else {
 		session, err = sm.Create(cwd, cols, rows, shell)
 		if err != nil {
@@ -142,6 +154,12 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 			if len(acc) > 0 {
 				conn.WriteMessage(websocket.BinaryMessage, acc)
 			}
+			// Mark the session as dead so future reconnect attempts with this
+			// session_id won't replay stale ring-buffer output for a dead PTY.
+			session.mu.Lock()
+			session.dead = true
+			session.closed = true
+			session.mu.Unlock()
 			close(done)
 			return
 		}

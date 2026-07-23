@@ -26,6 +26,7 @@ type Session struct {
 	LastAccess time.Time
 	mu         sync.Mutex
 	closed     bool
+	dead       bool // true once the PTY process has exited (EOF on read)
 
 	// Awaiting-input detection (backend-driven notification signal).
 	lastOutput       time.Time
@@ -133,10 +134,15 @@ func (sm *SessionManager) Get(id string) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	session, ok := sm.sessions[id]
-	if ok {
-		session.mu.Lock()
-		session.LastAccess = time.Now()
-		session.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	session.mu.Lock()
+	dead := session.dead
+	session.LastAccess = time.Now()
+	session.mu.Unlock()
+	if dead {
+		return nil
 	}
 	return session
 }
@@ -153,11 +159,15 @@ func (sm *SessionManager) Cleanup(maxIdle time.Duration) {
 	now := time.Now()
 	for id, session := range sm.sessions {
 		session.mu.Lock()
-		if now.Sub(session.LastAccess) > maxIdle {
+		if session.dead || now.Sub(session.LastAccess) > maxIdle {
 			session.closed = true
-			session.PTY.Close()
-			session.Cmd.Process.Kill()
-			session.Cmd.Wait()
+			if session.PTY != nil {
+				session.PTY.Close()
+			}
+			if session.Cmd != nil && session.Cmd.Process != nil {
+				session.Cmd.Process.Kill()
+				session.Cmd.Wait()
+			}
 			delete(sm.sessions, id)
 		}
 		session.mu.Unlock()
