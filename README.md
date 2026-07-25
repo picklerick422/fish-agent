@@ -9,14 +9,8 @@ Creates a PTY session for each WebSocket connection, forwarding terminal I/O bet
 ## Quick Start
 
 ```bash
-# ARM64 (openEuler / LOH 轻量级鸿蒙)
-curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-arm64
-mv fish-agent-linux-arm64 fish-agent
-chmod +x fish-agent
-
-# x86_64
-curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-amd64
-mv fish-agent-linux-amd64 fish-agent
+# 下载最新版本（ARM64，openEuler / LOH 轻量级鸿蒙）
+curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent
 chmod +x fish-agent
 
 # 启动
@@ -106,6 +100,8 @@ WebSocket 端点: `/ws?token=<token>&cols=80&rows=24&cwd=/path&session_id=<sessi
 | `{"type":"forked","id":"..."}` | server→client | New session ID |
 | `{"type":"ping","ts":123}` | bidirectional | Heartbeat |
 | `{"type":"error","error":"..."}` | server→client | Error notification |
+| `{"type":"list_dir","path":"/absolute/path"}` | client→server | Request directory listing |
+| `{"type":"list_dir_result","path":"...","entries":[...]}` | server→client | Directory entries (dirs first, dotfiles last, max 2000) |
 
 ## 会话保持与屏幕恢复
 
