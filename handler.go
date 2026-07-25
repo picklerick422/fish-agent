@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -270,6 +272,7 @@ type ctrlMsg struct {
 	Cols int    `json:"cols,omitempty"`
 	Rows int    `json:"rows,omitempty"`
 	CWD  string `json:"cwd,omitempty"`
+	Path string `json:"path,omitempty"` // list_dir target path
 }
 
 func handleCtrl(sm *SessionManager, session *Session, conn *websocket.Conn, msg []byte, cols, rows *int) bool {
@@ -321,6 +324,11 @@ func handleCtrl(sm *SessionManager, session *Session, conn *websocket.Conn, msg 
 		resp, _ := json.Marshal(map[string]string{"type": "forked", "id": forked.ID})
 		conn.WriteMessage(websocket.TextMessage, resp)
 		return true
+	case "list_dir":
+		result := handleListDir(ctrl.Path)
+		resp, _ := json.Marshal(result)
+		conn.WriteMessage(websocket.TextMessage, resp)
+		return true
 	}
 	return false
 }
@@ -341,4 +349,119 @@ func parseInt(s string) (int, bool) {
 		n = n*10 + int(c-'0')
 	}
 	return n, true
+}
+
+// --- list_dir support --------------------------------------------------------
+
+// listDirEntry describes a single directory entry in a list_dir_result.
+type listDirEntry struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size,omitempty"`
+	Mtime int64  `json:"mtime,omitempty"`
+	Mode  string `json:"mode,omitempty"`
+}
+
+// listDirResult is the response sent back for a list_dir request.
+type listDirResult struct {
+	Type      string         `json:"type"`
+	Path      string         `json:"path"`
+	Entries   []listDirEntry `json:"entries"`
+	Truncated bool           `json:"truncated,omitempty"`
+	Error     string         `json:"error,omitempty"`
+}
+
+// handleListDir reads a directory and returns its contents as a list_dir_result.
+func handleListDir(path string) listDirResult {
+	const maxEntries = 2000
+
+	if path == "" {
+		return listDirResult{Type: "list_dir_result", Path: path, Error: "missing path"}
+	}
+	if !strings.HasPrefix(path, "/") {
+		return listDirResult{Type: "list_dir_result", Path: path, Error: "path must be absolute"}
+	}
+	if strings.Contains(path, "..") {
+		return listDirResult{Type: "list_dir_result", Path: path, Error: "invalid path"}
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return listDirResult{Type: "list_dir_result", Path: path, Error: err.Error()}
+	}
+
+	// Separate directories and files; sort each group case-insensitively.
+	dirs := make([]fs.DirEntry, 0, len(entries))
+	files := make([]fs.DirEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e)
+		} else {
+			files = append(files, e)
+		}
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		return strings.ToLower(dirs[i].Name()) < strings.ToLower(dirs[j].Name())
+	})
+	sort.Slice(files, func(i, j int) bool {
+		return strings.ToLower(files[i].Name()) < strings.ToLower(files[j].Name())
+	})
+
+	// Hide dotfiles at the end within each group.
+	sort.SliceStable(dirs, func(i, j int) bool {
+		return !strings.HasPrefix(dirs[i].Name(), ".") && strings.HasPrefix(dirs[j].Name(), ".")
+	})
+	sort.SliceStable(files, func(i, j int) bool {
+		return !strings.HasPrefix(files[i].Name(), ".") && strings.HasPrefix(files[j].Name(), ".")
+	})
+
+	truncated := false
+	total := len(dirs) + len(files)
+	if total > maxEntries {
+		truncated = true
+		// Truncate files first, then dirs if still over.
+		keepFiles := maxEntries - len(dirs)
+		if keepFiles < 0 {
+			keepFiles = 0
+		}
+		if len(files) > keepFiles {
+			files = files[:keepFiles]
+		}
+		if len(dirs)+len(files) > maxEntries {
+			dirs = dirs[:maxEntries-len(files)]
+		}
+	}
+
+	result := make([]listDirEntry, 0, len(dirs)+len(files))
+	for _, e := range dirs {
+		info, err := e.Info()
+		entry := listDirEntry{Name: e.Name(), Type: "directory"}
+		if err == nil {
+			entry.Size = info.Size()
+			entry.Mtime = info.ModTime().UnixMilli()
+			entry.Mode = info.Mode().String()
+		}
+		result = append(result, entry)
+	}
+	for _, e := range files {
+		info, err := e.Info()
+		t := "file"
+		if e.Type()&fs.ModeSymlink != 0 {
+			t = "symlink"
+		}
+		entry := listDirEntry{Name: e.Name(), Type: t}
+		if err == nil {
+			entry.Size = info.Size()
+			entry.Mtime = info.ModTime().UnixMilli()
+			entry.Mode = info.Mode().String()
+		}
+		result = append(result, entry)
+	}
+
+	return listDirResult{
+		Type:      "list_dir_result",
+		Path:      path,
+		Entries:   result,
+		Truncated: truncated,
+	}
 }
