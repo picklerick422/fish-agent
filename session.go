@@ -28,6 +28,11 @@ type Session struct {
 	closed     bool
 	dead       bool // true once the PTY process has exited (EOF on read)
 
+	// WebSocket writes are not safe for concurrent use by multiple goroutines.
+	// ptyToWS, pollCwd, and handleCtrl all write to the same conn — serialize
+	// them through this mutex.
+	writeMu sync.Mutex
+
 	// Awaiting-input detection (backend-driven notification signal).
 	lastOutput       time.Time
 	awaitingNotified bool
@@ -195,7 +200,7 @@ func newID() string {
 
 func (s *Session) sendSessionID(conn *websocket.Conn) {
 	resp, _ := json.Marshal(map[string]string{"type": "session", "id": s.ID})
-	conn.WriteMessage(websocket.TextMessage, resp)
+	s.writeWS(conn, websocket.TextMessage, resp)
 }
 
 func (s *Session) attach(conn *websocket.Conn, cols, rows int) {
@@ -208,10 +213,19 @@ func (s *Session) attach(conn *websocket.Conn, cols, rows int) {
 
 	snapshot := s.OutputBuf.Snapshot()
 	if len(snapshot) > 0 {
-		conn.WriteMessage(websocket.BinaryMessage, snapshot)
+		s.writeWS(conn, websocket.BinaryMessage, snapshot)
 	}
 
 	conn.WriteJSON(map[string]interface{}{
 		"type": "resize", "cols": cols, "rows": rows,
 	})
+}
+
+// writeWS serialises all writes to a single WebSocket connection so that
+// concurrent goroutines (ptyToWS, pollCwd, handleCtrl responses) never
+// interleave frames and trigger a flushFrame panic.
+func (s *Session) writeWS(conn *websocket.Conn, messageType int, data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return conn.WriteMessage(messageType, data)
 }

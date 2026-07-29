@@ -81,7 +81,7 @@ func handleWS(sm *SessionManager, w http.ResponseWriter, r *http.Request) {
 
 	// Push initial CWD to frontend
 	if initCwd, _ := json.Marshal(map[string]string{"type": "cwd", "dir": session.CWD}); initCwd != nil {
-		conn.WriteMessage(websocket.TextMessage, initCwd)
+		session.writeWS(conn, websocket.TextMessage, initCwd)
 	}
 
 	done := make(chan struct{})
@@ -112,7 +112,7 @@ func pollCwd(session *Session, conn *websocket.Conn, done chan struct{}) {
 			session.CWD = wd
 			session.mu.Unlock()
 			if msg, err := json.Marshal(map[string]string{"type": "cwd", "dir": wd}); err == nil {
-				conn.WriteMessage(websocket.TextMessage, msg)
+				session.writeWS(conn, websocket.TextMessage, msg)
 			}
 		}
 	}
@@ -146,7 +146,7 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 							"type":  "awaiting_input",
 							"state": true,
 						})
-						conn.WriteMessage(websocket.TextMessage, msg)
+						session.writeWS(conn, websocket.TextMessage, msg)
 						session.setAwaitingNotified(true)
 					}
 				}
@@ -154,7 +154,7 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 			}
 			// Real error — connection or PTY closed.
 			if len(acc) > 0 {
-				conn.WriteMessage(websocket.BinaryMessage, acc)
+				session.writeWS(conn, websocket.BinaryMessage, acc)
 			}
 			// Mark the session as dead so future reconnect attempts with this
 			// session_id won't replay stale ring-buffer output for a dead PTY.
@@ -172,7 +172,7 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 				"type":  "awaiting_input",
 				"state": false,
 			})
-			conn.WriteMessage(websocket.TextMessage, msg)
+			session.writeWS(conn, websocket.TextMessage, msg)
 			session.setAwaitingNotified(false)
 		}
 		if session.isClosed() {
@@ -181,7 +181,7 @@ func ptyToWS(session *Session, conn *websocket.Conn, done chan struct{}) {
 		acc = append(acc, buf[:n]...)
 		session.OutputBuf.Write(buf[:n])
 		if len(acc) >= 65536 || n < len(buf) {
-			if err := conn.WriteMessage(websocket.BinaryMessage, acc); err != nil {
+			if err := session.writeWS(conn, websocket.BinaryMessage, acc); err != nil {
 				close(done)
 				return
 			}
@@ -304,11 +304,11 @@ func handleCtrl(sm *SessionManager, session *Session, conn *websocket.Conn, msg 
 			}
 		}
 		resp, _ := json.Marshal(map[string]interface{}{"type": "shells", "list": shells})
-		conn.WriteMessage(websocket.TextMessage, resp)
+		session.writeWS(conn, websocket.TextMessage, resp)
 		return true
 	case "cwd":
 		resp, _ := json.Marshal(map[string]string{"type": "cwd", "dir": session.CWD})
-		conn.WriteMessage(websocket.TextMessage, resp)
+		session.writeWS(conn, websocket.TextMessage, resp)
 		return true
 	case "fork":
 		cwd := session.CWD
@@ -318,16 +318,16 @@ func handleCtrl(sm *SessionManager, session *Session, conn *websocket.Conn, msg 
 		forked, err := sm.Create(cwd, *cols, *rows, session.Shell)
 		if err != nil {
 			resp, _ := json.Marshal(map[string]string{"type": "error", "error": err.Error()})
-			conn.WriteMessage(websocket.TextMessage, resp)
+			session.writeWS(conn, websocket.TextMessage, resp)
 			return true
 		}
 		resp, _ := json.Marshal(map[string]string{"type": "forked", "id": forked.ID})
-		conn.WriteMessage(websocket.TextMessage, resp)
+		session.writeWS(conn, websocket.TextMessage, resp)
 		return true
 	case "list_dir":
 		result := handleListDir(ctrl.Path)
 		resp, _ := json.Marshal(result)
-		conn.WriteMessage(websocket.TextMessage, resp)
+		session.writeWS(conn, websocket.TextMessage, resp)
 		return true
 	}
 	return false
