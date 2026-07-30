@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -329,6 +330,11 @@ func handleCtrl(sm *SessionManager, session *Session, conn *websocket.Conn, msg 
 		resp, _ := json.Marshal(result)
 		session.writeWS(conn, websocket.TextMessage, resp)
 		return true
+	case "file_read":
+		result := handleFileRead(ctrl.Path)
+		resp, _ := json.Marshal(result)
+		session.writeWS(conn, websocket.TextMessage, resp)
+		return true
 	}
 	return false
 }
@@ -463,5 +469,52 @@ func handleListDir(path string) listDirResult {
 		Path:      path,
 		Entries:   result,
 		Truncated: truncated,
+	}
+}
+// --- file_read support -------------------------------------------------------
+
+// fileReadResult is the response sent back for a file_read request.
+type fileReadResult struct {
+	Type    string `json:"type"`
+	Path    string `json:"path"`
+	Content string `json:"content,omitempty"` // base64-encoded
+	Size    int64  `json:"size,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// handleFileRead reads a file and returns its base64-encoded content.
+func handleFileRead(path string) fileReadResult {
+	if path == "" {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: "missing path"}
+	}
+	if !strings.HasPrefix(path, "/") {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: "path must be absolute"}
+	}
+	if strings.Contains(path, "..") {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: "invalid path"}
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: err.Error()}
+	}
+	if info.IsDir() {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: "is a directory"}
+	}
+	// Limit file size to 10 MB
+	if info.Size() > 10*1024*1024 {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: "file too large (>10MB)"}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fileReadResult{Type: "file_read_result", Path: path, Error: err.Error()}
+	}
+
+	return fileReadResult{
+		Type:    "file_read_result",
+		Path:    path,
+		Content: base64.StdEncoding.EncodeToString(data),
+		Size:    info.Size(),
 	}
 }

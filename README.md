@@ -107,6 +107,8 @@ WebSocket 端点: `/ws?token=<token>&cols=80&rows=24&cwd=/path&session_id=<sessi
 | `{"type":"error","error":"..."}` | server→client | Error notification |
 | `{"type":"list_dir","path":"/absolute/path"}` | client→server | Request directory listing |
 | `{"type":"list_dir_result","path":"...","entries":[...]}` | server→client | Directory entries (dirs first, dotfiles last, max 2000) |
+| `{"type":"file_read","path":"/absolute/path"}` | client→server | Read a remote file |
+| `{"type":"file_read_result","path":"...","content":"base64...","size":123}` | server→client | File content (base64-encoded, max 10MB) |
 
 ## 会话保持与屏幕恢复
 
