@@ -9,9 +9,14 @@ Creates a PTY session for each WebSocket connection, forwarding terminal I/O bet
 ## Quick Start
 
 ```bash
-# 下载最新版本（ARM64，openEuler / LOH 轻量级鸿蒙）
-curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent
-chmod +x fish-agent
+# 下载最新版本
+# ARM64（openEuler / LOH 轻量级鸿蒙）：
+curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-arm64
+# AMD64（x86_64 服务器）：
+curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-amd64
+
+chmod +x fish-agent-linux-*
+mv fish-agent-linux-* fish-agent
 
 # 启动
 ./fish-agent --token harmonyterm
@@ -116,7 +121,7 @@ fish-agent 支持会话保持功能，类似于 tmux。客户端断连后保持 
 
 ### 环形缓冲区
 
-服务端维护一个 1MB 的环形缓冲区，保存最近的 PTY 输出。重连时重放缓冲区内容，恢复断连前的终端界面。
+服务端维护一个 8MB 的环形缓冲区，保存最近的 PTY 输出。重连时重放缓冲区内容，恢复断连前的终端界面。
 
 ## 构建
 
