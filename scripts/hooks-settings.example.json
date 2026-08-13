@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/bin/fish-agent-notify.sh completed" }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          { "type": "command", "command": "$HOME/bin/fish-agent-notify.sh awaiting" }
+        ]
+      }
+    ]
+  }
+}

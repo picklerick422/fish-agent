@@ -32,46 +32,41 @@ type Session struct {
 	// ptyToWS, pollCwd, and handleCtrl all write to the same conn — serialize
 	// them through this mutex.
 	writeMu sync.Mutex
-
-	// Awaiting-input detection (backend-driven notification signal).
-	lastOutput       time.Time
-	awaitingNotified bool
-	outputMu         sync.Mutex
-}
-
-// --- awaiting-input helpers -------------------------------------------------
-
-func (s *Session) noteOutput() {
-	s.outputMu.Lock()
-	s.lastOutput = time.Now()
-	s.outputMu.Unlock()
-}
-
-func (s *Session) timeSinceOutput() time.Duration {
-	s.outputMu.Lock()
-	defer s.outputMu.Unlock()
-	return time.Since(s.lastOutput)
-}
-
-func (s *Session) setAwaitingNotified(v bool) {
-	s.outputMu.Lock()
-	s.awaitingNotified = v
-	s.outputMu.Unlock()
-}
-
-func (s *Session) isAwaitingNotified() bool {
-	s.outputMu.Lock()
-	defer s.outputMu.Unlock()
-	return s.awaitingNotified
 }
 
 type SessionManager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
+	token    string // auth token, injected into session env for hook reporting
 }
 
-func NewSessionManager() *SessionManager {
-	return &SessionManager{sessions: make(map[string]*Session)}
+func NewSessionManager(token string) *SessionManager {
+	return &SessionManager{sessions: make(map[string]*Session), token: token}
+}
+
+// Notify delivers a claude-code hook event (completed / awaiting) to the
+// session's active WebSocket connection, if any. Best-effort: events fired
+// while the client is disconnected are dropped by design.
+func (sm *SessionManager) Notify(sessionID, event, message string) {
+	sm.mu.Lock()
+	session := sm.sessions[sessionID]
+	sm.mu.Unlock()
+	if session == nil {
+		return
+	}
+	session.mu.Lock()
+	conn := session.wsConn
+	session.mu.Unlock()
+	ws, ok := conn.(*websocket.Conn)
+	if !ok || ws == nil {
+		return
+	}
+	msg, _ := json.Marshal(map[string]string{
+		"type":    "task_event",
+		"event":   event,
+		"message": message,
+	})
+	session.writeWS(ws, websocket.TextMessage, msg)
 }
 
 var loginShell string
@@ -98,12 +93,19 @@ func (sm *SessionManager) Create(cwd string, cols, rows int, shell ...string) (*
 	if os.Getenv("LANG") == "" {
 		env = append(env, "LANG=C.UTF-8")
 	}
-	cmd.Env = append(env,
+	// Generate the session ID before starting the PTY so it can be injected
+	// into the environment: claude-code hooks running inside this session
+	// report completion / permission events back to /notify with these vars.
+	id := newID()
+	env = append(env,
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 		"TERM_PROGRAM=fish-agent",
 		"TERM_PROGRAM_VERSION=0.1.0",
+		"FISH_SESSION_ID="+id,
+		"FISH_TOKEN="+sm.token,
 	)
+	cmd.Env = env
 
 	fd, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 	if err != nil {
@@ -111,7 +113,7 @@ func (sm *SessionManager) Create(cwd string, cols, rows int, shell ...string) (*
 	}
 
 	session := &Session{
-		ID:         newID(),
+		ID:         id,
 		PTY:        fd,
 		Cmd:        cmd,
 		CWD:        cwd,

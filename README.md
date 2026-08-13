@@ -105,6 +105,7 @@ WebSocket 端点: `/ws?token=<token>&cols=80&rows=24&cwd=/path&session_id=<sessi
 | `{"type":"forked","id":"..."}` | server→client | New session ID |
 | `{"type":"ping","ts":123}` | bidirectional | Heartbeat |
 | `{"type":"error","error":"..."}` | server→client | Error notification |
+| `{"type":"task_event","event":"completed\|awaiting","message":"..."}` | server→client | Claude-code hook event (see below) |
 | `{"type":"list_dir","path":"/absolute/path"}` | client→server | Request directory listing |
 | `{"type":"list_dir_result","path":"...","entries":[...]}` | server→client | Directory entries (dirs first, dotfiles last, max 2000) |
 | `{"type":"file_read","path":"/absolute/path"}` | client→server | Read a remote file |
@@ -124,6 +125,45 @@ fish-agent 支持会话保持功能，类似于 tmux。客户端断连后保持 
 ### 环形缓冲区
 
 服务端维护一个 8MB 的环形缓冲区，保存最近的 PTY 输出。重连时重放缓冲区内容，恢复断连前的终端界面。
+
+## 任务事件通知（claude-code hooks）
+
+fish-term 的任务通知由 claude-code hooks 驱动，而不是解析终端输出：
+
+- **Stop hook** → 每轮回复完成 → `task_event / completed`
+- **Notification hook（matcher: `permission_prompt`）** → claude 等待权限批准 → `task_event / awaiting`
+
+每个 session 的 shell 环境里注入 `FISH_SESSION_ID` 和 `FISH_TOKEN`，hook 脚本据此把事件 POST 到 `/notify` 端点，fish-agent 再经该 session 的 WebSocket 推送给设备端。在 fish-term 之外运行的 claude（无这两个环境变量）会自动静默跳过。
+
+### 部署 hooks（在 fish-agent 宿主机上）
+
+1. 安装上报脚本：
+
+   ```bash
+   mkdir -p ~/bin
+   cp scripts/notify-hook.sh ~/bin/fish-agent-notify.sh
+   chmod +x ~/bin/fish-agent-notify.sh
+   ```
+
+2. 在 `~/.claude/settings.json` 中合并 hooks 配置（示例见 `scripts/hooks-settings.example.json`；已有 `hooks` 键时合并而不是覆盖）：
+
+   ```json
+   {
+     "hooks": {
+       "Stop": [
+         { "hooks": [ { "type": "command", "command": "$HOME/bin/fish-agent-notify.sh completed" } ] }
+       ],
+       "Notification": [
+         { "matcher": "permission_prompt",
+           "hooks": [ { "type": "command", "command": "$HOME/bin/fish-agent-notify.sh awaiting" } ] }
+       ]
+     }
+   }
+   ```
+
+3. 重启 fish-agent 使新的 session 环境变量生效。
+
+要求：宿主机 claude-code ≥ 2.0.37（Notification hook）；脚本需要 `curl`（`python3` 可选，用于更可靠的 JSON 处理）。
 
 ## 构建
 
